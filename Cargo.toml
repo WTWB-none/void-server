@@ -1,0 +1,24 @@
+[package]
+name = "void_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = { version = "4", features = ["macros"] }
+actix-cors = "0.7.1"
+actix-rt = "2.0"
+confik = "0.14.0"
+dotenvy = "0.15.7"
+deadpool-postgres = { version = "0.14.1", features = ["serde"] }
+serde = "1.0.219"
+serde_json = "1.0.142"
+tokio-pg-mapper = "0.2.0"
+tokio-pg-mapper-derive = "0.2.0"
+pgdatetime = "0.3.0"
+tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }
+uuid = { version = "1.17.0", features = ["serde", "v4"] }
+derive_more = "2.0.1"
+chrono = { version = "0.4", features = ["serde"] } 
+log = "0.4"
+env_logger = "0.11.8"
+actix-files = "0.6.6"
