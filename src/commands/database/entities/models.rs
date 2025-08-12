@@ -7,6 +7,8 @@ use uuid::Uuid;
 pub struct User {
     pub id: Uuid,
     pub username: String,
+    pub hash_pass: String,
+    pub is_admin: bool,
     #[serde(skip_deserializing)]
     pub created_at: String, 
 }

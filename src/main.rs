@@ -1,4 +1,4 @@
-use actix_web::{http::header, middleware::Logger, web, App, Error, HttpResponse, HttpServer};
+use actix_web::{middleware::Logger, web, App, Error, HttpResponse, HttpServer};
 use actix_cors::Cors;
 use confik::{Configuration as _, EnvSource};
 use deadpool_postgres::Pool;
@@ -43,7 +43,7 @@ async fn main() -> std::io::Result<()> {
         .unwrap();
 
     let pool = config.pg.create_pool(None, NoTls).unwrap();
-
+    let _num_workers = num_cpus::get();
     let server = HttpServer::new(move || {
         
     let cors = Cors::default()
@@ -64,6 +64,8 @@ async fn main() -> std::io::Result<()> {
                 fs::Files::new("/static", "./static")
                 .show_files_listing()
             )
+            .service(get_manifest)
+            .service(download_stream)
             
     })
     .bind(config.server_addr.clone())?

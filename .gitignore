@@ -1,3 +1,4 @@
 /target
 .env
 /static
+/manifest_cache.json
