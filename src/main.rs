@@ -8,7 +8,8 @@ use actix_files as fs;
 
 mod commands;
 use commands::*;
-use crate::create_user;
+use crate::{create_user, check_pass};
+
 
 
 pub async fn add_user(
@@ -28,6 +29,28 @@ pub async fn add_user(
     })?;
 
     Ok(HttpResponse::Ok().json(new_user))
+}
+
+pub async fn login_user(
+    db_pool: web::Data<Pool>,
+) -> Result<HttpResponse, MyError> {
+    let client = db_pool.get().await.map_err(|e| {
+        log::error!("DB pool error: {}", e);
+        MyError::PoolError(e)
+    })?;
+
+    match sign_in(&client,&"sasha").await.map_err(|e| {
+        log::error!("Sign in error: {}", e);
+        e
+    }){
+        Ok(hash) => {
+            match check_pass(&hash.unwrap()) {
+                true => Ok(HttpResponse::Ok().json("Заебись")),
+                false => todo!(),
+            }
+        },
+        Err(e) => todo!(),
+    }
 }
 
 #[actix_web::main]
@@ -63,6 +86,10 @@ async fn main() -> std::io::Result<()> {
             .service(
                 fs::Files::new("/static", "./static")
                 .show_files_listing()
+            )
+            .service(
+                web::resource("/login")
+                .route(web::get().to(login_user))
             )
             .service(get_manifest)
             .service(download_stream)
