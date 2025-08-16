@@ -5,6 +5,7 @@ use deadpool_postgres::Pool;
 use dotenvy::dotenv;
 use tokio_postgres::NoTls;
 use actix_files as fs;
+use uuid::Uuid;
 
 mod commands;
 use commands::*;
@@ -28,6 +29,8 @@ pub async fn add_user(
     Ok(HttpResponse::Ok().json(new_user))
 }
 
+
+
 pub async fn add_group(
     group: web::Json<Group>,
     db_pool: web::Data<Pool>,
@@ -45,6 +48,46 @@ pub async fn add_group(
     })?;
 
     Ok(HttpResponse::Ok().json(new_group))
+}
+
+pub async fn get_user_role_handler(
+    path: web::Path<(Uuid, Uuid)>,
+    db_pool: web::Data<Pool>,
+) -> Result<HttpResponse, Error> {
+    let (user_id, group_id) = path.into_inner();
+    
+    let client = db_pool.get().await.map_err(|e| {
+        log::error!("DB pool error: {}", e);
+        MyError::PoolError(e)
+    })?;
+
+    match get_user_role(&client, user_id, group_id).await {
+        Ok(role) => Ok(HttpResponse::Ok().json(role)),
+        Err(MyError::NotFound) => Ok(HttpResponse::NotFound().json("User not found in group")),
+        Err(e) => {
+            log::error!("Get user role error: {}", e);
+            Ok(HttpResponse::InternalServerError().json("Internal server error"))
+        }
+    }
+}
+
+pub async fn add_group_member(
+    group_member: web::Json<GroupMember>,
+    db_pool: web::Data<Pool>,
+) -> Result<HttpResponse, Error> {
+    let group_member_info = group_member.into_inner();
+
+    let client = db_pool.get().await.map_err(|e| {
+        log::error!("DB pool error: {}", e);
+        MyError::PoolError(e)
+    })?;
+
+    let new_group_member = create_group_member(&client, group_member_info).await.map_err(|e| {
+        log::error!("Create group_member error: {}", e);
+        e
+    })?;
+
+    Ok(HttpResponse::Ok().json(new_group_member))
 }
 
 pub async fn login_user(
@@ -108,12 +151,20 @@ async fn main() -> std::io::Result<()> {
                 .route(web::post().to(add_group))
             )
             .service(
+                web::resource("/group_members")
+                .route(web::post().to(add_group_member))
+            )
+            .service(
                 fs::Files::new("/static", "./static")
                 .show_files_listing()
             )
             .service(
                 web::resource("/login")
                 .route(web::post().to(login_user))
+            )
+            .service(
+                web::resource("/user_role/{user_id}/{group_id}")
+                    .route(web::get().to(get_user_role_handler))
             )
             .service(get_manifest)
             .service(download_stream)
