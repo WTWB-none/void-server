@@ -1,0 +1,1 @@
+SELECT id FROM void_server.users WHERE username = $1;

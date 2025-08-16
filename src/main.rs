@@ -8,9 +8,6 @@ use actix_files as fs;
 
 mod commands;
 use commands::*;
-use crate::{create_user, check_pass};
-
-
 
 pub async fn add_user(
     user: web::Json<User>,
@@ -31,25 +28,48 @@ pub async fn add_user(
     Ok(HttpResponse::Ok().json(new_user))
 }
 
-pub async fn login_user(
+pub async fn add_group(
+    group: web::Json<Group>,
     db_pool: web::Data<Pool>,
-) -> Result<HttpResponse, MyError> {
+) -> Result<HttpResponse, Error> {
+    let group_info = group.into_inner();
+
     let client = db_pool.get().await.map_err(|e| {
-        log::error!("DB pool error: {}", e);
+        log::error!("DB pool error {}", e);
         MyError::PoolError(e)
     })?;
 
-    match sign_in(&client,&"sasha").await.map_err(|e| {
-        log::error!("Sign in error: {}", e);
+    let new_group = create_group(&client, group_info).await.map_err(|e| {
+        log::error!("Create group error: {}", e);
         e
-    }){
-        Ok(hash) => {
-            match check_pass(&hash.unwrap()) {
-                true => Ok(HttpResponse::Ok().json("Заебись")),
-                false => todo!(),
+    })?;
+
+    Ok(HttpResponse::Ok().json(new_group))
+}
+
+pub async fn login_user(
+    credentials: web::Json<LoginUser>,
+    db_pool: web::Data<Pool>,
+) -> Result<HttpResponse, Error> {
+    let credentials = credentials.into_inner();
+    let client = db_pool.get().await.map_err(|e| {
+        log::error!("DB pool error: {}", e);
+        actix_web::error::ErrorInternalServerError("Database connection error")
+    })?;
+
+    match sign_in(&client, &credentials.username).await {
+        Ok(Some(hash)) => {
+            if check_pass(&hash, &credentials.password) {
+                Ok(HttpResponse::Ok().json("Login successful"))
+            } else {
+                Ok(HttpResponse::Unauthorized().json("Invalid credentials"))
             }
-        },
-        Err(e) => todo!(),
+        }
+        Ok(None) => Ok(HttpResponse::NotFound().json("User not found")),
+        Err(e) => {
+            log::error!("Sign in error: {}", e);
+            Ok(HttpResponse::InternalServerError().json("Internal server error"))
+        }
     }
 }
 
@@ -84,12 +104,16 @@ async fn main() -> std::io::Result<()> {
                 .route(web::post().to(add_user))
             )
             .service(
+                web::resource("/groups")
+                .route(web::post().to(add_group))
+            )
+            .service(
                 fs::Files::new("/static", "./static")
                 .show_files_listing()
             )
             .service(
                 web::resource("/login")
-                .route(web::get().to(login_user))
+                .route(web::post().to(login_user))
             )
             .service(get_manifest)
             .service(download_stream)
