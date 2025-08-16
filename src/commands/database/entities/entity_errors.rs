@@ -12,6 +12,28 @@ pub enum MyError {
     PoolError(PoolError),
 }
 
+#[derive(Debug, Error, From)]
+pub struct StreamError {
+    pub message: String,
+}
+
+impl std::fmt::Display for StreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl ResponseError for StreamError {
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            StreamError => {
+                HttpResponse::InternalServerError().body(self.message.clone())
+            }
+        }
+    }
+}
+
+
 impl ResponseError for MyError {
     fn error_response(&self) -> HttpResponse {
         match *self {
