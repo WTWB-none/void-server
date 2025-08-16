@@ -35,3 +35,4 @@ tar = "0.4.41"
 argon2 = "0.5.3"
 strum = { version = "0.27", features = ["derive"] }
 strum_macros = "0.27"
+postgres-types = "0.2.9"
