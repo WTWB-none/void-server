@@ -6,6 +6,7 @@ use dotenvy::dotenv;
 use tokio_postgres::NoTls;
 use actix_files as fs;
 use uuid::Uuid;
+use chrono::Utc;
 
 mod commands;
 use commands::*;
@@ -36,6 +37,10 @@ pub async fn add_group(
     db_pool: web::Data<Pool>,
 ) -> Result<HttpResponse, Error> {
     let group_info = group.into_inner();
+    let joined_at =  Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();;
+    let user_id = group_info.created_by.clone();
+    let group_id = group_info.id.clone();
+
 
     let client = db_pool.get().await.map_err(|e| {
         log::error!("DB pool error {}", e);
@@ -47,8 +52,20 @@ pub async fn add_group(
         e
     })?;
 
+    add_group_member(web::Json(GroupMember{
+        user_id: user_id,
+        group_id: group_id,
+        role: GroupRole::Owner,
+        joined_at: joined_at,
+    }), db_pool).await.map_err(|e| {
+        log::error!("Create owner error: {}", e);
+        e
+    })?;
+
     Ok(HttpResponse::Ok().json(new_group))
 }
+
+
 
 pub async fn get_user_role_handler(
     path: web::Path<(Uuid, Uuid)>,
@@ -71,6 +88,31 @@ pub async fn get_user_role_handler(
     }
 }
 
+
+
+pub async fn get_user_uuid_handler(
+    path: web::Path<String>,
+    db_pool: web::Data<Pool>
+) -> Result<HttpResponse, Error> {
+    let username = path.into_inner();
+
+    let client = db_pool.get().await.map_err(|e| {
+        log::error!("DB pool error: {}", e);
+        MyError::PoolError(e)
+    })?;
+
+    match get_user_uuid(&client, username).await {
+        Ok(uuid) => Ok(HttpResponse::Ok().json(uuid)),
+        Err(MyError::NotFound) => Ok(HttpResponse::NotFound().json("No such User with same username")),
+        Err(e) => {
+            log::error!("Get user uuid error: {}", e);
+            Ok(HttpResponse::InternalServerError().json("Internal server error"))
+        }
+    }
+}
+
+
+
 pub async fn add_group_member(
     group_member: web::Json<GroupMember>,
     db_pool: web::Data<Pool>,
@@ -89,6 +131,32 @@ pub async fn add_group_member(
 
     Ok(HttpResponse::Ok().json(new_group_member))
 }
+
+
+pub async fn delete_group_member_handler(
+    group: web::Json<Group>,
+    path: web::Path<(Uuid, Uuid)>,
+    db_pool: web::Data<Pool>,
+) -> Result<HttpResponse, Error> {
+    let (delete_who, delete_by) = path.into_inner();
+    let group_info = group.into_inner();
+    
+    let client = db_pool.get().await.map_err(|e| {
+        log::error!("DB pool error: {}", e);
+        MyError::PoolError(e)
+    })?;
+
+    match delete_group_member(&client, delete_who, delete_by, group_info).await {
+    Ok(delete_user) => Ok(HttpResponse::Ok().json(delete_user)),
+    Err(MyError::NotFound) => Ok(HttpResponse::NotFound().json("User not found in group")),
+    Err(MyError::PermissionDenied) => Ok(HttpResponse::Forbidden().json("Permission denied")),
+    Err(e) => {
+        log::error!("Delete user error: {}", e);
+        Ok(HttpResponse::InternalServerError().json("Internal server error"))
+    }
+}
+}
+
 
 pub async fn login_user(
     credentials: web::Json<LoginUser>,
@@ -115,6 +183,8 @@ pub async fn login_user(
         }
     }
 }
+
+
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -144,27 +214,35 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .service(
                 web::resource("/users")
-                .route(web::post().to(add_user))
+                    .route(web::post().to(add_user))
             )
             .service(
                 web::resource("/groups")
-                .route(web::post().to(add_group))
+                    .route(web::post().to(add_group))
             )
             .service(
                 web::resource("/group_members")
-                .route(web::post().to(add_group_member))
+                    .route(web::post().to(add_group_member))
             )
             .service(
                 fs::Files::new("/static", "./static")
-                .show_files_listing()
+                    .show_files_listing()
             )
             .service(
                 web::resource("/login")
-                .route(web::post().to(login_user))
+                    .route(web::post().to(login_user))
             )
             .service(
                 web::resource("/user_role/{user_id}/{group_id}")
                     .route(web::get().to(get_user_role_handler))
+            )
+            .service(
+                web::resource("/user_uuid/{username}")
+                    .route(web::get().to(get_user_uuid_handler))
+            )
+            .service(
+                web::resource("/delete_user/{delete_who}/{delete_by}")
+                    .route(web::post().to(delete_group_member_handler))
             )
             .service(get_manifest)
             .service(download_stream)

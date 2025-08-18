@@ -3,6 +3,7 @@ use tokio_pg_mapper::FromTokioPostgresRow;
 use chrono::Utc;
 use tokio_postgres::types::ToSql;
 use super::{User, MyError};
+use uuid::Uuid;
 use argon2::{
     password_hash::{
         rand_core::OsRng,
@@ -23,6 +24,7 @@ pub async fn create_user(client: &Client, user_info: User) -> Result<User, MyErr
 
     let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let hash_pass = pass_hash(&user_info.hash_pass);
+    let is_admin = false;
 
     client
         .query(
@@ -31,7 +33,7 @@ pub async fn create_user(client: &Client, user_info: User) -> Result<User, MyErr
                 &user_info.id as &(dyn ToSql + Sync),
                 &user_info.username,
                 &hash_pass,
-                &user_info.is_admin,
+                &is_admin,
                 &created_at,
             ],
         )
@@ -43,7 +45,19 @@ pub async fn create_user(client: &Client, user_info: User) -> Result<User, MyErr
         .ok_or(MyError::NotFound)
 }
 
+pub async fn get_user_uuid(
+    client: &Client,
+    username: String,
+) -> Result<Uuid, MyError> {
+    let _stmt = include_str!("../sql/get_user_uuid.sql");
+    let stmt = client.prepare(&_stmt).await?;
 
+    let row = client.query_opt(&stmt, &[&username])
+        .await?
+        .ok_or(MyError::NotFound)?;
+
+    Ok(row.get("id"))
+}
 
 pub async fn sign_in(client: &Client, username: &str) -> Result<Option<String>, MyError> {
     let _stmt = include_str!("../sql/get_user_pass.sql");

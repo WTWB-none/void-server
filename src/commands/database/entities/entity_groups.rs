@@ -29,7 +29,10 @@ pub async fn create_group(client: &Client, group_info: Group) -> Result<Group, M
         .collect::<Vec<Group>>()
         .pop()
         .ok_or(MyError::NotFound)
+        
 }
+
+
 
 pub async fn get_user_role(
     client: &Client,
@@ -75,6 +78,43 @@ pub async fn create_group_member(client: &Client, group_member_info: GroupMember
                 &role_str,
                 &joined_at,
             ],
+        )
+        .await?
+        .iter()
+        .map(|row| GroupMember::from_row_ref(row).unwrap())
+        .collect::<Vec<GroupMember>>()
+        .pop()
+        .ok_or(MyError::NotFound)
+}
+
+
+pub async fn delete_group_member(
+    client: &Client,
+    delete_who: Uuid,
+    delete_by: Uuid,
+    group_info: Group,
+) -> Result<GroupMember, MyError> {
+    let group_id = group_info.id;
+    let delete_who_role = get_user_role(client, delete_who, group_id).await.map_err(|e| {
+        log::error!("Error get_role user {}", e);
+        e
+    })?;
+    let delete_by_role = get_user_role(client, delete_by, group_id).await.map_err(|e| {
+        log::error!("Error get_role user {}", e);
+        e
+    })?;
+
+    if !delete_by_role.can_remove(&delete_who_role) {
+        return Err(MyError::PermissionDenied);
+    }
+
+    let _stmt = include_str!("../sql/delete_group_member.sql");
+    let stmt = client.prepare(&_stmt).await?;
+
+    client
+        .query(
+            &stmt,
+            &[&delete_who, &group_id] 
         )
         .await?
         .iter()
