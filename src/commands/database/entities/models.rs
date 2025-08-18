@@ -26,6 +26,7 @@ pub struct User {
     pub id: Uuid,
     pub username: String,
     pub hash_pass: String,
+    #[serde(skip_deserializing)]
     pub is_admin: bool,
     #[serde(skip_deserializing)]
     pub created_at: String, 
@@ -148,5 +149,34 @@ impl GroupRole {
 
     pub fn has_permission(&self, permission: Permission) -> bool {
         self.permissions().contains(&permission)
+    }
+
+    pub fn can_remove(&self, target_role: &GroupRole) -> bool {
+        match target_role.has_permission(Permission::DeleteMember) {
+            true => match self {
+                GroupRole::Owner => {
+                    !matches!(target_role, GroupRole::Owner)
+                }
+                GroupRole::Admin => {
+                    matches!(target_role, GroupRole::Moderator | GroupRole::User)
+                }
+                GroupRole::Moderator => false,
+                GroupRole::User => false,
+                            }
+            false => false
+        } 
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+    #[test]
+    fn check_group_role() {
+        assert_eq!(true, GroupRole::Owner.can_remove(&GroupRole::Owner));
+        assert_eq!(true, GroupRole::Moderator.can_remove(&GroupRole::Owner));
+        assert_eq!(true, GroupRole::Moderator.can_remove(&GroupRole::Moderator));
     }
 }
