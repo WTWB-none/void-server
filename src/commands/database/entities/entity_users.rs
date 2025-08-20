@@ -12,6 +12,11 @@ use argon2::{
     Argon2
 };
 
+const CREATE_USER: &str = include_str!("../../../../sql/create_user.sql");
+const GET_USER_UUID: &str =include_str!("../../../../sql/get_user_uuid.sql");
+const GET_USER_PASS: &str = include_str!("../../../../sql/get_user_pass.sql");
+
+
 #[derive(serde::Deserialize)]
 pub struct LoginUser {
     pub username: String,
@@ -19,8 +24,7 @@ pub struct LoginUser {
 }
 
 pub async fn create_user(client: &Client, user_info: User) -> Result<User, MyError> {
-    let _stmt = include_str!("../sql/create_user.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(CREATE_USER).await?;
 
     let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let hash_pass = pass_hash(&user_info.hash_pass);
@@ -49,8 +53,7 @@ pub async fn get_user_uuid(
     client: &Client,
     username: String,
 ) -> Result<Uuid, MyError> {
-    let _stmt = include_str!("../sql/get_user_uuid.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(GET_USER_UUID).await?;
 
     let row = client.query_opt(&stmt, &[&username])
         .await?
@@ -60,8 +63,7 @@ pub async fn get_user_uuid(
 }
 
 pub async fn sign_in(client: &Client, username: &str) -> Result<Option<String>, MyError> {
-    let _stmt = include_str!("../sql/get_user_pass.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(GET_USER_PASS).await?;
 
     match client.query_opt(&stmt, &[&username]).await? {
         Some(row) => {

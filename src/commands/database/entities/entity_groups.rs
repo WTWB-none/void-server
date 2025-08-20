@@ -7,9 +7,14 @@ use uuid::Uuid;
 
 use super::MyError;
 
+const CREATE_GROUP: &str = include_str!("../../../../sql/create_group.sql");
+const GET_USER_ROLE: &str = include_str!("../../../../sql/get_user_role.sql");
+const CREATE_GROUP_MEMBER: &str = include_str!("../../../../sql/create_group_member.sql"); 
+const DELETE_GROUP_MEMBER: &str = include_str!("../../../../sql/delete_group_member.sql");
+
+
 pub async fn create_group(client: &Client, group_info: Group) -> Result<Group, MyError> {
-    let _stmt = include_str!("../sql/create_group.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(CREATE_GROUP).await?;
     let created_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     client
@@ -39,8 +44,7 @@ pub async fn get_user_role(
     user_id: Uuid,
     group_id: Uuid,
 ) -> Result<GroupRole, MyError> {
-    let _stmt = include_str!("../sql/get_user_role.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(GET_USER_ROLE).await?;
 
     let row = client.query_opt(&stmt, &[&user_id, &group_id])
         .await?
@@ -50,8 +54,7 @@ pub async fn get_user_role(
 }
 
 pub async fn create_group_member(client: &Client, group_member_info: GroupMember) -> Result<GroupMember, MyError> {
-    let _stmt = include_str!("../sql/create_group_member.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(CREATE_GROUP_MEMBER).await?;
     let joined_at = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     let role = match group_member_info.role.as_str() {
@@ -108,8 +111,7 @@ pub async fn delete_group_member(
         return Err(MyError::PermissionDenied);
     }
 
-    let _stmt = include_str!("../sql/delete_group_member.sql");
-    let stmt = client.prepare(&_stmt).await?;
+    let stmt = client.prepare(DELETE_GROUP_MEMBER).await?;
 
     client
         .query(
