@@ -7,9 +7,16 @@ use tokio_postgres::NoTls;
 use actix_files as fs;
 use uuid::Uuid;
 use chrono::Utc;
+use std::sync::Arc;
+use actix_web_httpauth::middleware::HttpAuthentication;
+use crate::{JwtKeys, bearer_validator};
 
 mod commands;
 use commands::*;
+
+pub struct JwtState {
+    
+}
 
 pub async fn add_user(
     user: web::Json<User>,
@@ -37,7 +44,7 @@ pub async fn add_group(
     db_pool: web::Data<Pool>,
 ) -> Result<HttpResponse, Error> {
     let group_info = group.into_inner();
-    let joined_at =  Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();;
+    let joined_at =  Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let user_id = group_info.created_by.clone();
     let group_id = group_info.id.clone();
 
@@ -200,8 +207,13 @@ async fn main() -> std::io::Result<()> {
 
     let pool = config.pg.create_pool(None, NoTls).unwrap();
     let _num_workers = num_cpus::get();
+
+    let _jwt = Arc::new(JwtKeys::from_env());
+    let jwt_state = config.init_jwt()
+        .expect("Failed to initialize JWT");
     let server = HttpServer::new(move || {
         
+    let bearer =  HttpAuthentication::bearer(bearer_validator);
     let cors = Cors::default()
             .allow_any_origin() 
             .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"]) 
@@ -209,9 +221,17 @@ async fn main() -> std::io::Result<()> {
 
 
         App::new()
+            .app_data(web::Data::from(jwt_state.clone()))
             .wrap(cors)
             .wrap(Logger::default())
             .app_data(web::Data::new(pool.clone()))
+            .service(
+                web::scope("/auth")
+                    .service(login)
+                    .service(refresh)
+                    .service(logout)
+                    .service(me)
+            )
             .service(
                 web::resource("/users")
                     .route(web::post().to(add_user))
@@ -246,7 +266,6 @@ async fn main() -> std::io::Result<()> {
             )
             .service(get_manifest)
             .service(download_stream)
-            
     })
     .bind(config.server_addr.clone())?
     .run();

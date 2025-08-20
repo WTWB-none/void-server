@@ -1,0 +1,1 @@
+UPDATE void_server.refresh_tokens SET revoked_at = now() WHERE jti = $1;
