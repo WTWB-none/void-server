@@ -2,7 +2,7 @@ use actix_web::{get, post, web, HttpResponse, Error};
 use actix_web::http::header;
 use actix_web_httpauth::extractors::bearer::BearerAuth;
 use deadpool_postgres::Pool;
-use postgres_types::ToSql;
+use tokio_postgres::types::ToSql;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use time::{Duration, OffsetDateTime};
@@ -16,7 +16,7 @@ use crate::commands::auth::jwt::{JwtKeys, Claims, sign, verify};
 #[derive(Deserialize)] struct RefreshBody { refresh: String }
 
 const SQL_GET_USER_BY_USERNAME: &str = include_str!("../../../sql/get_user.sql");
-const SQL_GET_USER_BY_ID: &str       = include_str!("../../../sql/get_user_uuid.sql");
+const SQL_GET_USER_BY_ID: &str       = include_str!("../../../sql/get_user.sql");
 const SQL_REFRESH_INSERT: &str = include_str!("../../../sql/insert_refresh_tokens.sql");
 const SQL_REFRESH_EXISTS_VALID: &str = include_str!("../../../sql/insert_if_need_refresh_token.sql");
 const SQL_REFRESH_REVOKE: &str = include_str!("../../../sql/refresh_token.sql");
@@ -37,9 +37,6 @@ async fn login(
 ) -> Result<HttpResponse, Error> {
     let client = db_pool.get().await.map_err(actix_web::error::ErrorInternalServerError)?;
     
-    /*let row_opt = client.query_opt(SQL_GET_USER_BY_USERNAME, &[&body.username]).await
-        .map_err(actix_web::error::ErrorInternalServerError)?; */
-        
     let row = client.query_one(SQL_GET_USER_BY_USERNAME, &[&body.username]).await
     .map_err(|e| {
         log::error!("Database error: {}", e);
@@ -100,10 +97,12 @@ async fn login(
 
     let expires_at = now + jwt.refresh_ttl;
 
+    let expires_at_timestamp = expires_at.unix_timestamp();
+
     client.execute(SQL_REFRESH_INSERT, &[
         &refresh_jti, 
         &user_id, 
-        &expires_at.unix_timestamp().to_string(),
+        &expires_at_timestamp.to_string(), 
         &ua, 
         &ip_addr
     ]).await.map_err(actix_web::error::ErrorInternalServerError)?;
@@ -122,23 +121,31 @@ async fn refresh(
 ) -> Result<HttpResponse, Error> {
     let claims = verify(&body.refresh, &jwt)?;
     let client = db_pool.get().await.map_err(actix_web::error::ErrorInternalServerError)?;
+    log::info!("penis!");
 
     let ok = client.query_opt(SQL_REFRESH_EXISTS_VALID, &[&claims.jti, &claims.sub]).await
         .map_err(actix_web::error::ErrorInternalServerError)?;
+    
     if ok.is_none() { return Ok(HttpResponse::Unauthorized().finish()); }
+      log::info!("penis2!");
 
     let row_opt = client.query_opt(SQL_GET_USER_BY_ID, &[&claims.sub]).await
         .map_err(actix_web::error::ErrorInternalServerError)?;
-    let row = match row_opt { Some(r) => r, None => return Ok(HttpResponse::Unauthorized().finish()) };
+    
+    let row = match row_opt { Some(r) => r, None => {
+        log::info!("penismatch!");
+        return Ok(HttpResponse::Unauthorized().finish())} };
+      log::info!("penis3!");
     
     let is_active: bool = row.try_get("is_active").unwrap_or(true);
     let token_version_db: i32 = row.try_get("token_version").unwrap_or(0);
     let is_admin: bool = row.try_get("is_admin").unwrap_or(false);
 
-    if !is_active && token_version_db != claims.token_version {
+    if !is_active || token_version_db != claims.token_version {
         let _ = client.execute(SQL_REFRESH_REVOKE, &[&claims.jti]).await;
         return Ok(HttpResponse::Unauthorized().finish());
     }
+    log::info!("penis4!");
 
     let now = OffsetDateTime::now_utc();
     let access_claims = Claims {
