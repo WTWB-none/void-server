@@ -209,8 +209,6 @@ async fn main() -> std::io::Result<()> {
     })
     .expect("Failed to initialize JWT");
     let server = HttpServer::new(move || {
-        
-        let bearer =  HttpAuthentication::bearer(bearer_validator);
         let cors = Cors::default()
             .allow_any_origin() 
             .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"]) 
@@ -227,7 +225,6 @@ async fn main() -> std::io::Result<()> {
                     .service(login)
                     .service(refresh)
                     .service(logout)
-                    .service(me)
             )
             .service(
                 web::resource("/users")
