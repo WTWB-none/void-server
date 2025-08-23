@@ -9,14 +9,9 @@ use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 use actix_web_httpauth::middleware::HttpAuthentication;
-use crate::{JwtKeys, bearer_validator};
 
 mod commands;
 use commands::*;
-
-pub struct JwtState {
-    
-}
 
 pub async fn add_user(
     user: web::Json<User>,
@@ -208,23 +203,26 @@ async fn main() -> std::io::Result<()> {
     let pool = config.pg.create_pool(None, NoTls).unwrap();
     let _num_workers = num_cpus::get();
 
-    let _jwt = Arc::new(JwtKeys::from_env());
     let jwt_state = config.init_jwt()
-        .expect("Failed to initialize JWT");
+    .map_err(|e| {
+        log::error!("Failed to initialize JWT: {}", e);
+        e
+    })
+    .expect("Failed to initialize JWT");
     let server = HttpServer::new(move || {
         
-    let bearer =  HttpAuthentication::bearer(bearer_validator);
-    let cors = Cors::default()
+        let bearer =  HttpAuthentication::bearer(bearer_validator);
+        let cors = Cors::default()
             .allow_any_origin() 
             .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"]) 
             .allowed_header(actix_web::http::header::CONTENT_TYPE);
 
 
         App::new()
-            .app_data(web::Data::from(jwt_state.clone()))
+            .app_data(web::Data::new(jwt_state.clone()))
+            .app_data(web::Data::new(pool.clone()))
             .wrap(cors)
             .wrap(Logger::default())
-            .app_data(web::Data::new(pool.clone()))
             .service(
                 web::scope("/auth")
                     .service(login)

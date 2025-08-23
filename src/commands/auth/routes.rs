@@ -2,10 +2,12 @@ use actix_web::{get, post, web, HttpResponse, Error};
 use actix_web::http::header;
 use actix_web_httpauth::extractors::bearer::BearerAuth;
 use deadpool_postgres::Pool;
+use postgres_types::ToSql;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+use std::net::IpAddr;
 use crate::commands::auth::jwt::{JwtKeys, Claims, sign, verify};
 
 // === DTO ===
@@ -26,7 +28,7 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, Error> {
     Ok(Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
 }
 
-#[post("/auth/login")]
+#[post("/login")]
 async fn login(
     db_pool: web::Data<Pool>,
     jwt: web::Data<Arc<JwtKeys>>,
@@ -35,13 +37,18 @@ async fn login(
 ) -> Result<HttpResponse, Error> {
     let client = db_pool.get().await.map_err(actix_web::error::ErrorInternalServerError)?;
     
-    let row_opt = client.query_opt(SQL_GET_USER_BY_USERNAME, &[&body.username]).await
-        .map_err(actix_web::error::ErrorInternalServerError)?;
+    /*let row_opt = client.query_opt(SQL_GET_USER_BY_USERNAME, &[&body.username]).await
+        .map_err(actix_web::error::ErrorInternalServerError)?; */
         
-    let row = match row_opt {
-        Some(r) => r,
-        None => return Ok(HttpResponse::Unauthorized().json("Invalid credentials"))
-    };
+    let row = client.query_one(SQL_GET_USER_BY_USERNAME, &[&body.username]).await
+    .map_err(|e| {
+        log::error!("Database error: {}", e);
+        if e.to_string().contains("no rows returned") {
+            actix_web::error::ErrorUnauthorized("Invalid credentials")
+        } else {
+            actix_web::error::ErrorInternalServerError("Database error")
+        }
+    })?;
 
     let user_id: Uuid = row.get("id");
     let hash_pass: String = row.get("hash_pass");
@@ -88,9 +95,9 @@ async fn login(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
         
-    let ip_txt: Option<String> = req.peer_addr()
-        .map(|sa| sa.ip().to_string());
-        
+    let ip_addr: Option<IpAddr> = req.peer_addr()
+        .map(|socket_addr| socket_addr.ip());
+
     let expires_at = now + jwt.refresh_ttl;
 
     client.execute(SQL_REFRESH_INSERT, &[
@@ -98,7 +105,7 @@ async fn login(
         &user_id, 
         &expires_at.unix_timestamp().to_string(),
         &ua, 
-        &ip_txt
+        &ip_addr
     ]).await.map_err(actix_web::error::ErrorInternalServerError)?;
 
     Ok(HttpResponse::Ok().json(TokenPair {
@@ -107,7 +114,7 @@ async fn login(
     }))
 }
 
-#[post("/auth/refresh")]
+#[post("/refresh")]
 async fn refresh(
     db_pool: web::Data<Pool>,
     jwt: web::Data<Arc<JwtKeys>>,
@@ -149,7 +156,7 @@ async fn refresh(
     Ok(HttpResponse::Ok().json(serde_json::json!({ "access": access_token })))
 }
 
-#[post("/auth/logout")]
+#[post("/logout")]
 async fn logout(
     db_pool: web::Data<Pool>,
     jwt: web::Data<Arc<JwtKeys>>,

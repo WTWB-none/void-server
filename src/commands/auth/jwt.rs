@@ -18,7 +18,7 @@ pub struct JwtKeys {
     pub access_ttl: Duration,
     pub refresh_ttl: Duration,
 }
-/// Безопаснее держать в AppData Arc<JwtKeys>
+
 pub type JwtState = Arc<JwtKeys>;
 
 pub struct JwtSettings {
