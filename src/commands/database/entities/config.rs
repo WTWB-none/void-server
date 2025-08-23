@@ -2,6 +2,7 @@ use confik::Configuration;
 use serde::Deserialize;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
 use time::Duration;
+use std::sync::Arc;
 
 use crate::commands::JwtKeys;
 
@@ -36,8 +37,11 @@ impl confik::Configuration for DbConfig {
     type Builder = Option<Self>;
 }
 
+
+pub type JwtState = Arc<JwtKeys>;
+
 impl ExampleConfig {
-    pub fn init_jwt(&self) -> Result<crate::commands::JwtState, Box<dyn std::error::Error>> {
+    pub fn init_jwt(&self) -> Result<JwtState, Box<dyn std::error::Error>> {
         let alg = match self.jwt_alg.as_str() {
             "RS256" => Algorithm::RS256,
             _ => Algorithm::HS256,
@@ -72,6 +76,6 @@ impl ExampleConfig {
             refresh_ttl: Duration::seconds(self.jwt_refresh_ttl_secs),
         };
 
-        Ok(std::sync::Arc::new(keys))
+        Ok(Arc::new(keys))
     }
 }
