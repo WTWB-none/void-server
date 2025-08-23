@@ -41,7 +41,7 @@ impl confik::Configuration for DbConfig {
 pub type JwtState = Arc<JwtKeys>;
 
 impl ExampleConfig {
-    pub fn init_jwt(&self) -> Result<JwtState, Box<dyn std::error::Error>> {
+    pub fn init_jwt(&self) -> Result<JwtState, String> {
         let alg = match self.jwt_alg.as_str() {
             "RS256" => Algorithm::RS256,
             _ => Algorithm::HS256,
@@ -59,8 +59,8 @@ impl ExampleConfig {
                 let private_pem = self.jwt_private_pem.as_ref().ok_or("RSA_PRIVATE_KEY_PEM required")?;
                 let public_pem = self.jwt_public_pem.as_ref().ok_or("RSA_PUBLIC_KEY_PEM required")?;
                 (
-                    EncodingKey::from_rsa_pem(private_pem.as_bytes())?,
-                    DecodingKey::from_rsa_pem(public_pem.as_bytes())?,
+                    EncodingKey::from_rsa_pem(private_pem.as_bytes()).map_err(|e| e.to_string())?,
+                    DecodingKey::from_rsa_pem(public_pem.as_bytes()).map_err(|e| e.to_string())?,
                 )
             }
             _ => return Err("Unsupported algorithm".into()),
