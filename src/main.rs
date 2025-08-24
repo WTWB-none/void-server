@@ -7,7 +7,6 @@ use tokio_postgres::NoTls;
 use actix_files as fs;
 use uuid::Uuid;
 use chrono::Utc;
-use actix_web_httpauth::middleware::HttpAuthentication;
 
 mod commands;
 use commands::*;

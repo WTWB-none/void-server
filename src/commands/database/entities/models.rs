@@ -33,7 +33,7 @@ pub struct User {
 }
 
 #[derive(Debug, Deserialize, PostgresMapper, Serialize)]
-#[pg_mapper(table = "group")]
+#[pg_mapper(table = "groups")]
 pub struct Group {
     pub id: Uuid,
     pub name: String,
