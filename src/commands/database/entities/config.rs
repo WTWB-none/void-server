@@ -9,6 +9,8 @@ use crate::commands::JwtKeys;
 #[derive(Debug, Default, Configuration)]
 pub struct ExampleConfig {
     pub server_addr: String,
+    pub allowed_origins: Option<String>,
+    pub show_dir_listing: Option<String>,
 
     pub jwt_alg: String,
     pub jwt_secret: Option<String>,

@@ -1,4 +1,4 @@
-use actix_web::{middleware::Logger, web, App, Error, HttpResponse, HttpServer};
+use actix_web::{middleware::{Logger, DefaultHeaders}, web, App, Error, HttpResponse, HttpServer};
 use actix_cors::Cors;
 use confik::{Configuration as _, EnvSource};
 use deadpool_postgres::Pool;
@@ -208,17 +208,29 @@ async fn main() -> std::io::Result<()> {
     })
     .expect("Failed to initialize JWT");
     let server = HttpServer::new(move || {
-        let cors = Cors::default()
-            .allow_any_origin() 
-            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"]) 
-            .allowed_header(actix_web::http::header::CONTENT_TYPE);
-
+        let cors = {
+            let mut cors = Cors::default()
+                .allowed_methods(vec!["GET","POST","PUT","DELETE"])
+                .allowed_header(actix_web::http::header::CONTENT_TYPE);
+            if let Some(list) = config.allowed_origins.clone().filter(|s| !s.trim().is_empty()) {
+                for origin in list.split(',') {
+                    cors = cors.allowed_origin(origin.trim());
+                }
+            } else {
+                cors = cors.allow_any_origin();
+            }
+            cors
+        };
 
         App::new()
             .app_data(web::Data::new(jwt_state.clone()))
             .app_data(web::Data::new(pool.clone()))
             .wrap(cors)
             .wrap(Logger::default())
+            .wrap(DefaultHeaders::new()
+                .add(("X-Content-Type-Options","nosniff"))
+                .add(("X-Frame-Options","DENY"))
+                .add(("Referrer-Policy","no-referrer")))
             .service(
                 web::scope("/auth")
                     .service(login)
@@ -238,8 +250,11 @@ async fn main() -> std::io::Result<()> {
                     .route(web::post().to(add_group_member))
             )
             .service(
-                fs::Files::new("/static", "./static")
-                    .show_files_listing()
+                if config.show_dir_listing.clone().unwrap().parse::<bool>().unwrap_or(false) {
+                    fs::Files::new("/static", "./static").show_files_listing()
+                } else {
+                    fs::Files::new("/static", "./static")
+                }
             )
             .service(
                 web::resource("/login")
