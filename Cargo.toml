@@ -41,3 +41,4 @@ thiserror = "2.0.15"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
 actix-web-httpauth = "0.8"
 time = { version = "0.3", features = ["macros", "formatting"] }
+tokio-stream = "0.1.17"

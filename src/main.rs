@@ -272,8 +272,10 @@ async fn main() -> std::io::Result<()> {
                 web::resource("/delete_user/{delete_who}/{delete_by}")
                     .route(web::post().to(delete_group_member_handler))
             )
-            .service(get_manifest)
-            .service(download_stream)
+            .service(manifest)
+            .service(actix_files::Files::new("/assets", "./assets").prefer_utf8(true))
+            .service(file_get)
+            .service(downloader_page)
     })
     .bind(config.server_addr.clone())?
     .run();

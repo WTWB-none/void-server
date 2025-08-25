@@ -20,6 +20,7 @@ const SQL_GET_USER_BY_ID: &str       = include_str!("../../../sql/get_user_by_id
 const SQL_REFRESH_INSERT: &str = include_str!("../../../sql/insert_refresh_tokens.sql");
 const SQL_REFRESH_EXISTS_VALID: &str = include_str!("../../../sql/insert_if_need_refresh_token.sql");
 const SQL_REFRESH_REVOKE: &str = include_str!("../../../sql/refresh_token.sql");
+const SQL_REFRESH_REVOKE_ACTIVE: &str = include_str!("../../../sql/token_revoke_refresh.sql");
 
 fn verify_password(password: &str, hash: &str) -> Result<bool, Error> {
     let parsed = PasswordHash::new(hash).map_err(actix_web::error::ErrorInternalServerError)?;
@@ -120,30 +121,22 @@ async fn refresh(
     body: web::Json<RefreshBody>,
 ) -> Result<HttpResponse, Error> {
     let claims = verify(&body.refresh, &jwt)?;
-    let client = db_pool.get().await.map_err(actix_web::error::ErrorInternalServerError)?;
+    let mut client = db_pool.get().await.map_err(actix_web::error::ErrorInternalServerError)?;
 
-    let ok = client.query_opt(SQL_REFRESH_EXISTS_VALID, &[&claims.jti, &claims.sub]).await
+    let row = client
+        .query_opt(SQL_GET_USER_BY_ID, &[&claims.sub])
+        .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
-    
-    if ok.is_none() { return Ok(HttpResponse::Unauthorized().finish()); }
-
-    let row_opt = client.query_opt(SQL_GET_USER_BY_ID, &[&claims.sub]).await
-        .map_err(actix_web::error::ErrorInternalServerError)?;
-    
-    let row = match row_opt { Some(r) => r, None => {
-        return Ok(HttpResponse::Unauthorized().finish())} };
-    
+    let row = match row { Some(r) => r, None => return Ok(HttpResponse::Unauthorized().finish()) };
     let is_active: bool = row.try_get("is_active").unwrap_or(true);
     let token_version_db: i32 = row.try_get("token_version").unwrap_or(0);
     let is_admin: bool = row.try_get("is_admin").unwrap_or(false);
-
     if !is_active || token_version_db != claims.token_version {
-        let _ = client.execute(SQL_REFRESH_REVOKE, &[&claims.jti]).await;
         return Ok(HttpResponse::Unauthorized().finish());
     }
 
     let now = OffsetDateTime::now_utc();
-    let access_claims = Claims {
+    let new_access_claims = Claims {
         iss: jwt.issuer.clone(),
         aud: jwt.audience.clone(),
         sub: claims.sub,
@@ -153,9 +146,48 @@ async fn refresh(
         exp: (now + jwt.access_ttl).unix_timestamp(),
         jti: Uuid::new_v4(),
     };
-    let access_token = sign(&access_claims, &jwt);
+    let access_token = sign(&new_access_claims, &jwt);
 
-    Ok(HttpResponse::Ok().json(serde_json::json!({ "access": access_token })))
+    let new_refresh_jti = Uuid::new_v4();
+    let new_refresh_claims = Claims {
+        iss: jwt.issuer.clone(),
+        aud: jwt.audience.clone(),
+        sub: claims.sub,
+        is_admin,
+        token_version: token_version_db,
+        iat: now.unix_timestamp(),
+        exp: (now + jwt.refresh_ttl).unix_timestamp(),
+        jti: new_refresh_jti,
+    };
+    let refresh_token = sign(&new_refresh_claims, &jwt);
+    let expires_at_ts = (now + jwt.refresh_ttl).unix_timestamp();
+    
+    // Ротация refresh в одной транзакции
+    let transaction = client.build_transaction().start().await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    let revoked = transaction
+        .query_opt(SQL_REFRESH_REVOKE_ACTIVE, &[&claims.jti, &claims.sub])
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    if revoked.is_none() {
+        transaction.rollback().await.ok();
+        return Ok(HttpResponse::Unauthorized().finish());
+    }
+
+    transaction.execute(
+        SQL_REFRESH_INSERT,
+        &[&new_refresh_jti, &claims.sub, &expires_at_ts.to_string(), &None::<String>, &None::<std::net::IpAddr>],
+    )
+    .await
+    .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    transaction.commit()
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "access": access_token, "refresh": refresh_token })))
 }
 
 #[post("/logout")]
@@ -166,7 +198,14 @@ async fn logout(
 ) -> Result<HttpResponse, Error> {
     let claims = verify(&body.refresh, &jwt)?;
     let client = db_pool.get().await.map_err(actix_web::error::ErrorInternalServerError)?;
-    client.execute(SQL_REFRESH_REVOKE, &[&claims.jti]).await
+
+    let row = client
+        .query_opt(SQL_REFRESH_REVOKE_ACTIVE, &[&claims.jti, &claims.sub])
+        .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
+
+    if row.is_none() {
+        return Ok(HttpResponse::Unauthorized().json("Invalid or inactive refresh token"));
+    }
     Ok(HttpResponse::Ok().finish())
 }
