@@ -1,111 +1,48 @@
-use actix_web::{get, HttpResponse, http::header, error::ResponseError};
-use futures::{channel::mpsc::{channel, Sender}, SinkExt};
-use serde::{Serialize, Deserialize};
-use std::fs::{self, File, metadata};
-use std::io::{self, Read, Write};
-use std::path::Path;
-use std::thread;
-use std::time::UNIX_EPOCH;
+// src/commands/fileserver/mod.rs
+use actix_files::NamedFile;
+use actix_web::{get, web, HttpRequest, HttpResponse};
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use sha2::{Digest, Sha256};
-use actix_web::web::Bytes;
-use tar::Builder;
-use rayon::prelude::*;
-use super::StreamError;
 
 const STATIC_DIR: &str = "./static";
-const MANIFEST_CACHE: &str = "./manifest_cache.json";
-const MAX_ZIP_SIZE: u64 = 1_000_000_000;
 
-#[derive(Serialize, Deserialize)]
-struct FileMetadata {
-    path: String,
-    mtime: u64,
-    size: u64,
-    hash: String,
+fn safe_join(root: &Path, tail: &str) -> Option<PathBuf> {
+    let mut out = PathBuf::from(root);
+    for part in Path::new(tail) {
+        let s = part.to_string_lossy();
+        if s.is_empty() || s == "." || s == ".." { continue; }
+        if s.contains(':') { return None; }
+        out.push(s.as_ref());
+    }
+    Some(out)
 }
 
-fn dir_size(path: &Path) -> u64 {
-    WalkDir::new(path)
+#[get("/file/{tail:.*}")]
+pub async fn file_get(req: HttpRequest, tail: web::Path<String>) -> HttpResponse {
+    let base = PathBuf::from(STATIC_DIR);
+    let target = match safe_join(&base, &tail.into_inner()) { Some(p) => p, None => return HttpResponse::BadRequest().finish() };
+    match NamedFile::open_async(target).await {
+        Ok(f) => f.use_last_modified(true).prefer_utf8(false).into_response(&req),
+        Err(_) => HttpResponse::NotFound().finish(),
+    }
+}
+
+#[get("/manifest")]
+pub async fn manifest() -> HttpResponse {
+    let base = PathBuf::from(STATIC_DIR);
+    if !base.exists() { return HttpResponse::NotFound().finish(); }
+    let files: Vec<String> = WalkDir::new(&base)
+        .min_depth(1)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_file())
-        .map(|e| e.metadata().map(|m| m.len()).unwrap_or(0))
-        .sum()
+        .filter_map(|e| e.path().strip_prefix(&base).ok().map(|p| p.to_string_lossy().replace('\\', "/")))
+        .collect();
+    HttpResponse::Ok().json(files)
 }
 
-struct ChannelWriter<'a> {
-    sender: &'a mut Sender<Result<Bytes, StreamError>>,
-}
 
-impl<'a> Write for ChannelWriter<'a> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let bytes = Bytes::copy_from_slice(buf);
-        futures::executor::block_on(self.sender.send(Ok(bytes)))
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-#[get("/download-stream")]
-async fn download_stream() -> HttpResponse {
-    let dir_path = Path::new(STATIC_DIR);
-    let total_size = dir_size(dir_path);
-    if total_size > MAX_ZIP_SIZE {
-        return HttpResponse::PayloadTooLarge().body("Directory too large for full download. Use /manifest and download individual files via /file/{path}.");
-    }
-
-    let (mut tx, rx) = channel::<Result<Bytes, StreamError>>(100);
-
-    thread::spawn(move || {
-        let mut errors = Vec::new();
-        {
-            let mut tar_builder = Builder::new(ChannelWriter { sender: &mut tx });
-
-            for entry in WalkDir::new(STATIC_DIR).into_iter().filter_map(|e| e.ok()) {
-                let path = entry.path();
-                let rel_path = match path.strip_prefix(STATIC_DIR) {
-                    Ok(p) => p,
-                    Err(_) => continue,
-                };
-
-                if path.is_file() {
-                    let mut file = match File::open(path) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            errors.push(StreamError { message: e.to_string() });
-                            continue;
-                        }
-                    };
-
-                    if let Err(e) = tar_builder.append_file(rel_path, &mut file) {
-                        errors.push(StreamError { message: e.to_string() });
-                        continue;
-                    }
-                } else if path.is_dir() {
-                    if let Err(e) = tar_builder.append_dir(rel_path, path) {
-                        errors.push(StreamError { message: e.to_string() });
-                        continue;
-                    }
-                }
-            }
-        }
-
-        for error in errors {
-            let _ = tx.try_send(Err(error));
-        }
-    });
-
-    HttpResponse::Ok()
-        .content_type("application/x-tar")
-        .append_header((header::CONTENT_DISPOSITION, "attachment; filename=\"static.tar\""))
-        .streaming(rx)
-}
-
+/*
 #[get("/manifest")]
 async fn get_manifest() -> HttpResponse {
     if let Ok(cache_file) = File::open(MANIFEST_CACHE) {
@@ -155,3 +92,45 @@ async fn get_manifest() -> HttpResponse {
 
     HttpResponse::Ok().json(files)
 }
+*/
+
+
+#[get("/downloader")]
+pub async fn downloader_page() -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(r###"<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Void Downloader</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{font:16px/1.4 system-ui,Segoe UI,Roboto,Arial;margin:24px}
+    input,button{font:inherit;padding:6px 10px}
+    #log{white-space:pre-wrap;background:#111;color:#ddd;padding:10px;border-radius:8px;max-height:40vh;overflow:auto}
+  </style>
+</head>
+<body>
+  <h1>Скачивание файлов по списку</h1>
+  <div>
+    Префикс API:
+    <input id="prefix" value="" placeholder="/fs (если есть префикс)">
+    Параллельно:
+    <input id="conc" type="number" value="8" min="1" max="64">
+    <button id="go">Скачать всё</button>
+  </div>
+  <p>Открой DevTools → Network, чтобы видеть параллельные загрузки.</p>
+  <div id="log"></div>
+  <script src="assets/downloader.js"></script>
+</body></html>
+"###)
+}
+
+#[get("/assets/downloader.js")]
+pub async fn downloader_js() -> HttpResponse {
+    HttpResponse::Ok()
+        .content_type("application/javascript; charset=utf-8")
+        .body(r###"const $=s=>document.querySelector(s);function log(m){const el=$("#log");el.textContent+=m+"\n";el.scrollTop=el.scrollHeight}async function getManifest(prefix){const r=await fetch((prefix||"")+"/manifest");if(!r.ok)throw new Error("manifest HTTP "+r.status);return await r.json()}function downloadOne(prefix,p){const a=document.createElement("a");a.href=(prefix||"")+"/file/"+encodeURI(p);a.download=p.split("/").pop()||"file";document.body.appendChild(a);a.click();a.remove()}async function run(){const prefix=$("#prefix").value.trim();const conc=Math.max(1,Math.min(64,Number($("#conc").value)||8));log("Loading manifest...");const paths=await getManifest(prefix);log("Files: "+paths.length+"  Concurrency: "+conc);let i=0,active=0;function pump(){while(active<conc&&i<paths.length){const p=paths[i++];active++;try{downloadOne(prefix,p)}catch(e){log("error: "+p+" -> "+e)}active--;log("start: "+i+"/"+paths.length+" ("+p+")")}if(i>=paths.length&&active===0){log("DONE")}else{requestAnimationFrame(pump)}}pump()}window.addEventListener("DOMContentLoaded",function(){document.querySelector("#go").addEventListener("click",function(){document.querySelector("#log").textContent="";run().catch(function(e){log("FATAL: "+e)})})});"###)
+}
+
