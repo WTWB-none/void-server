@@ -8,8 +8,9 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 use std::net::IpAddr;
 use crate::commands::auth::jwt::{JwtKeys, Claims, sign, verify};
+use argon2::{Algorithm, Argon2, PasswordHash, PasswordVerifier, Params, Version};
 
-// === DTO ===
+
 #[derive(Deserialize)] struct LoginBody { username: String, password: String }
 #[derive(Serialize)] struct TokenPair { access: String, refresh: String }
 #[derive(Deserialize)] struct RefreshBody { refresh: String }
@@ -21,9 +22,10 @@ const SQL_REFRESH_EXISTS_VALID: &str = include_str!("../../../sql/insert_if_need
 const SQL_REFRESH_REVOKE: &str = include_str!("../../../sql/refresh_token.sql");
 
 fn verify_password(password: &str, hash: &str) -> Result<bool, Error> {
-    use argon2::{Argon2, PasswordHash, PasswordVerifier};
     let parsed = PasswordHash::new(hash).map_err(actix_web::error::ErrorInternalServerError)?;
-    Ok(Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+    let params = Params::new(19 * 1024, 2, 1, None).map_err(actix_web::error::ErrorInternalServerError)?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    Ok(argon2.verify_password(password.as_bytes(), &parsed).is_ok())
 }
 
 #[post("/login")]

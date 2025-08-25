@@ -5,11 +5,8 @@ use tokio_postgres::types::ToSql;
 use super::{User, MyError};
 use uuid::Uuid;
 use argon2::{
-    password_hash::{
-        rand_core::OsRng,
-        PasswordHash, PasswordHasher, PasswordVerifier, SaltString
-    },
-    Argon2
+    password_hash::{ rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString },
+    Algorithm, Argon2, Params, Version
 };
 
 const CREATE_USER: &str = include_str!("../../../../sql/create_user.sql");
@@ -76,16 +73,17 @@ pub async fn sign_in(client: &Client, username: &str) -> Result<Option<String>, 
 
 fn pass_hash(pass: &str) -> String {
     let salt = SaltString::generate(&mut OsRng);
-
-    let argon2 = Argon2::default();
-
+    let params = Params::new(19 * 1024, 2, 1, None).expect("argon2 params");
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     argon2.hash_password(pass.as_bytes(), &salt).unwrap().to_string()
 }
 
 pub fn check_pass(hash_pass: &str, password: &str) -> bool {
     match PasswordHash::new(hash_pass) {
         Ok(parsed_hash) => {
-            Argon2::default()
+            let params = Params::new(19 * 1024, 2, 1, None).expect("argon2 params");
+            let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+            argon2
                 .verify_password(password.as_bytes(), &parsed_hash)
                 .is_ok()
         }
